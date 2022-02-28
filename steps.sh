@@ -453,11 +453,10 @@ az webapp config connection-string set \
 # Set up calls to app dependencies like databases.
 
 # Create a subnet
-# 10. Create a bastion host
 WEB_APP_OUTBOUND_SUBNET="$WEB_APP_SUBNET_NAME-outbound"
 WEB_APP_OUTBOUND_SUBNET_CIDR=10.10.6.0/27
 
-# 10.1 Create a subnet for the bastion host
+# Create a subnet for the outbound traffic
 az network vnet subnet create \
 --name $WEB_APP_OUTBOUND_SUBNET \
 --resource-group $RESOURCE_GROUP \
@@ -465,7 +464,7 @@ az network vnet subnet create \
 --address-prefixes $WEB_APP_OUTBOUND_SUBNET_CIDR
 
 
-# Outbound traffic internal network
+# Create a vnet integration for the outbound traffic
 az webapp vnet-integration add \
 --name $WEBAPP_NAME \
 --resource-group $RESOURCE_GROUP \
