@@ -432,8 +432,7 @@ az rest --method GET --uri $SITE_URI
 ####################################################
 
 # Create a service principal
-az ad sp create-for-rbac --name $WEBAPP_NAME --role contributor  > auth.json
-  az ad sp create-for-rbac --name $WEBAPP_NAME --role contributor --scopes /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP --sdk-auth > auth.json
+az ad sp create-for-rbac --name $WEBAPP_NAME --role contributor --scopes /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP --sdk-auth > auth.json
 
 ####################################################
 ############ App Settings configuration ############
