@@ -123,3 +123,111 @@ curl http://$APP_GW_PUBLIC_IP
 # Two options: 
 # self-hosted agent
 # onedeploy extension: https://www.returngis.net/2022/02/desplegar-codigo-en-un-app-service-con-private-endpoint-desde-fuera-de-su-red/
+
+#################################################
+################ Deployment #####################
+#################################################
+
+# Create a Storage Account
+STORAGE_ACCOUNT_NAME="fordeploys"
+
+az storage account create \
+--name $STORAGE_ACCOUNT_NAME \
+--resource-group $RESOURCE_GROUP \
+--location $LOCATION \
+--sku Standard_LRS \
+--https-only true \
+--allow-blob-public-access false
+
+
+# Clone a sample code
+git clone https://github.com/0GiS0/todo-sample-for-app-svc.git
+cd todo-sample-for-app-svc
+dotnet build --configuration Release
+dotnet publish -c Release -o dotnetapp/
+cd dotnetapp
+zip -r dotnetapp.zip .
+
+# Create container
+az storage container create \
+--name packages \
+--account-name $STORAGE_ACCOUNT_NAME
+
+#Upload the package
+az storage blob upload \
+--account-name $STORAGE_ACCOUNT_NAME \
+--container-name packages \
+--name dotnetapp2.zip \
+--file dotnetapp.zip --overwrite
+
+# Create a sas token
+STORAGE_ACCOUNT_KEY=$(az storage account keys list --account-name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query "[0].value" --output tsv)
+end=`date -v+30M '+%Y-%m-%dT%H:%MZ'`
+
+SAS=$(az storage account generate-sas --permissions rl --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_ACCOUNT_KEY --services b --resource-types co --expiry $end -o tsv)
+
+ZIP_URL="https://$STORAGE_ACCOUNT_NAME.blob.core.windows.net/packages/dotnetapp2.zip?$SAS"
+
+SUBSCRIPTION_ID=$(az account show --query id --output tsv)
+
+SITE_URI="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${WEBAPP_NAME}/extensions/onedeploy?api-version=2020-12-01"
+
+# Deploy the web app using Kudu
+az rest --method PUT \
+        --uri $SITE_URI \
+        --body '{ 
+            "properties": { 
+                "packageUri": "'"${ZIP_URL}"'",                
+                "type": "zip", 
+                "ignorestack": false,
+                "clean": true,
+                "restart": false
+            }
+        }'
+
+# Check the status
+az rest --method GET --uri $SITE_URI
+
+# Add connection string and settings for the web app
+az webapp config connection-string set \
+--name $WEBAPP_NAME \
+--resource-group $RESOURCE_GROUP \
+--settings ConnectionString \
+--connection-string-type SQLAzure \
+--settings "MyDbConnection=Server=tcp:internalsqlsvr.database.windows.net,1433;Initial Catalog=tododb;Persist Security Info=False;User ID=sqladmin;Password=P@ssw0rd;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+
+####################################################
+#### WARNING: this communication won't work ########
+####################################################
+
+# Outbound Traffic
+# Set up calls to app dependencies like databases.
+
+# Create a subnet
+WEB_APP_OUTBOUND_SUBNET="$WEB_APP_SUBNET_NAME-outbound"
+WEB_APP_OUTBOUND_SUBNET_CIDR=10.10.6.0/27
+
+# Create a subnet for the outbound traffic
+az network vnet subnet create \
+--name $WEB_APP_OUTBOUND_SUBNET \
+--resource-group $RESOURCE_GROUP \
+--vnet-name $VNET_NAME \
+--address-prefixes $WEB_APP_OUTBOUND_SUBNET_CIDR
+
+
+# Create a vnet integration for the outbound traffic
+az webapp vnet-integration add \
+--name $WEBAPP_NAME \
+--resource-group $RESOURCE_GROUP \
+--subnet $WEB_APP_OUTBOUND_SUBNET \
+--vnet $VNET_NAME
+
+# You need to restart the web app to take effect
+az webapp restart --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP
+
+
+# Add app setting environment variable
+az webapp config appsettings set \
+--name $WEBAPP_NAME \
+--resource-group $RESOURCE_GROUP \
+--settings "ASPNETCORE_ENVIRONMENT=Development"
