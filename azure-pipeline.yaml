@@ -1,0 +1,114 @@
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  buildConfiguration: 'Release'
+
+stages:
+  - stage: "Build"
+    displayName: "Build the web app"
+    jobs:
+      - job: "Build"
+        displayName: "Build the web app"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: dotnet build --configuration $(buildConfiguration)
+            displayName: 'dotnet build $(buildConfiguration)'
+          - script: dotnet publish -c Release -o webapp/
+            displayName: dotnet publish
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: 'webapp'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+  - stage: "Deploy"
+    dependsOn: Build
+    jobs:
+    - job: "Deploy"
+      displayName: "Deploy the web app"
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+        - task: DownloadBuildArtifacts@1
+          inputs:
+            buildType: 'current'
+            downloadType: 'single'
+            artifactName: 'drop'
+            downloadPath: 'webapp'
+        - script: |
+              cd webapp/drop
+              pwd
+              zip -r ../../webapp.zip .
+          displayName: Zip the content
+        - task: AzureCLI@2
+          displayName: Upload package
+          inputs:
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            azureSubscription: 'Gisela Microsoft Azure Internal Subscription'
+            inlineScript: |
+              FULL_PACKAGE_NAME=webapp-$(Build.BuildId)
+              echo "Package name: $FULL_PACKAGE_NAME"
+              az storage blob upload --account-name $(STORAGE_ACCOUNT_NAME) --container-name packages --name $FULL_PACKAGE_NAME.zip --file webapp.zip
+        - script: |
+            echo "##vso[task.setvariable variable=expiration]$(date -d "30 minutes" +%Y-%m-%dT%H:%MZ)"
+            date -d "30 minutes" +%Y-%m-%dT%H:%MZ
+          displayName: Get the date after 30 minutes
+        # - script: echo $(expiration)
+        #   displayName: Value of expiration       
+        - task: AzureCLI@2
+          displayName: Use OneDeploy to deploy the app
+          inputs:
+            azureSubscription: 'Gisela Microsoft Azure Internal Subscription'
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              FULL_PACKAGE_NAME=webapp-$(Build.BuildId)
+              STORAGE_ACCOUNT_KEY=$(az storage account keys list --account-name $(STORAGE_ACCOUNT_NAME) --resource-group $(RESOURCE_GROUP) --query "[0].value" --output tsv)            
+              SAS=$(az storage account generate-sas --permissions rl --account-name $(STORAGE_ACCOUNT_NAME) --account-key $STORAGE_ACCOUNT_KEY --services b --resource-types co --expiry $(expiration) -o tsv)
+              ZIP_URL="https://$(STORAGE_ACCOUNT_NAME).blob.core.windows.net/packages/$FULL_PACKAGE_NAME.zip?$SAS"
+              SUBSCRIPTION_ID=$(az account show --query id --output tsv)
+              SITE_URI="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(WEBAPP_NAME)/extensions/onedeploy?api-version=2020-12-01"
+              az rest --method PUT \
+              --uri $SITE_URI \
+              --body '{ 
+                  "properties": { 
+                  "packageUri": "'"${ZIP_URL}"'",                
+                  "type": "zip", 
+                  "ignorestack": false,
+                  "clean": true,
+                  "restart": false
+                }
+              }'
+        - script: |
+            sudo apt-get update
+            sudo apt-get install jq
+          displayName: Install jq
+        - task: AzureCLI@2
+          displayName: Check deployment status
+          inputs:
+            azureSubscription: 'Gisela Microsoft Azure Internal Subscription'
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |                   
+
+              SITE_URI="https://management.azure.com/subscriptions/$(SUBSCRIPTION_ID)/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(WEBAPP_NAME)/extensions/onedeploy?api-version=2020-12-01"
+
+              while true; do
+                STATUS=$(az rest --method GET --uri $SITE_URI | jq '.value[0].properties.provisioningState')
+                
+                if [[ "$STATUS" == "\"Succeeded\"" ]]; then
+                    echo "Deployment succeeded"
+                    break
+                elif [[ "$STATUS" == "\"Failed\"" ]]; then
+                  echo "Deployment failed"
+                  exit 1
+                else
+                  echo "Deployment state: $STATUS..."
+                  sleep 5
+                fi
+              done
