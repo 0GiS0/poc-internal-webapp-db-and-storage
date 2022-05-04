@@ -1,6 +1,7 @@
 # Variables
 RESOURCE_GROUP="internal-web"
 LOCATION="francecentral"
+VNET_NAME="vnet"
 
 #################################################
 ##### Storage Account with private endpoint #####
@@ -16,65 +17,66 @@ az storage account create \
 --sku Standard_LRS \
 --default-action Deny 
 
-# STORAGE_SUBNET_NAME="storage-subnet"
-# STORAGE_SUBNET_CIDR=10.10.5.0/24
+STORAGE_SUBNET_NAME="storage-subnet"
+STORAGE_SUBNET_CIDR=10.10.7.0/24
 
 # Create a subnet for the storage account
-# az network vnet subnet create \
-# --name $STORAGE_SUBNET_NAME \
-# --resource-group $RESOURCE_GROUP \
-# --vnet-name $WEB_APP_VNET_NAME \
-# --address-prefixes $STORAGE_SUBNET_CIDR
+az network vnet subnet create \
+--name $STORAGE_SUBNET_NAME \
+--resource-group $RESOURCE_GROUP \
+--vnet-name $VNET_NAME \
+--address-prefixes $STORAGE_SUBNET_CIDR
 
 # Disable private endpoint network policies
-# az network vnet subnet update \
-# --name $STORAGE_SUBNET_NAME \
-# --resource-group $RESOURCE_GROUP \
-# --vnet-name $WEB_APP_VNET_NAME \
-# --disable-private-endpoint-network-policies true
+az network vnet subnet update \
+--name $STORAGE_SUBNET_NAME \
+--resource-group $RESOURCE_GROUP \
+--vnet-name $VNET_NAME \
+--disable-private-endpoint-network-policies true
 
 
-# STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query id --output tsv)
+STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query id --output tsv)
 
 # Create a private endpoint for the storage account
-# az network private-endpoint create \
-# --name $STORAGE_ACCOUNT_NAME-private-endpoint \
-# --resource-group $RESOURCE_GROUP \
-# --vnet-name $WEB_APP_VNET_NAME \
-# --subnet $STORAGE_SUBNET_NAME \
-# --connection-name "storage-connection" \
-# --private-connection-resource-id $STORAGE_ACCOUNT_ID \
-# --group-id blob
+az network private-endpoint create \
+--name $STORAGE_ACCOUNT_NAME-private-endpoint \
+--resource-group $RESOURCE_GROUP \
+--location $LOCATION \
+--vnet-name $VNET_NAME \
+--subnet $STORAGE_SUBNET_NAME \
+--connection-name "storage-connection" \
+--private-connection-resource-id $STORAGE_ACCOUNT_ID \
+--group-id blob
 
 
-# BLOB_PRIVATE_DNS_ZONE="privatelink.blob.core.windows.net"
+BLOB_PRIVATE_DNS_ZONE="privatelink.blob.core.windows.net"
 
 # Create a DNS private zone
-# az network private-dns zone create \
-# --resource-group $RESOURCE_GROUP \
-# --name $BLOB_PRIVATE_DNS_ZONE
+az network private-dns zone create \
+--resource-group $RESOURCE_GROUP \
+--name $BLOB_PRIVATE_DNS_ZONE
 
 #link the private zone to the vnet
-# az network private-dns link vnet create \
-# --name "blob_private_dns" \
-# --resource-group $RESOURCE_GROUP \
-# --zone-name $BLOB_PRIVATE_DNS_ZONE \
-# --virtual-network $WEB_APP_VNET_NAME \
-# --registration-enabled false
+az network private-dns link vnet create \
+--name "blob_private_dns" \
+--resource-group $RESOURCE_GROUP \
+--zone-name $BLOB_PRIVATE_DNS_ZONE \
+--virtual-network $VNET_NAME \
+--registration-enabled false
 
 # Register the storage account in the private DNS zone
 # Get the ID of the azure storage NIC
-# STORAGE_NIC_ID=$(az network private-endpoint show --name $STORAGE_ACCOUNT_NAME-private-endpoint -g $RESOURCE_GROUP --query 'networkInterfaces[0].id' -o tsv)
+STORAGE_NIC_ID=$(az network private-endpoint show --name $STORAGE_ACCOUNT_NAME-private-endpoint -g $RESOURCE_GROUP --query 'networkInterfaces[0].id' -o tsv)
 
 # Get the IP of the azure storage NIC
-# STORAGE_ACCOUNT_PRIVATE_IP=$(az resource show --ids $STORAGE_NIC_ID --query 'properties.ipConfigurations[0].properties.privateIPAddress' --output tsv)
+STORAGE_ACCOUNT_PRIVATE_IP=$(az resource show --ids $STORAGE_NIC_ID --query 'properties.ipConfigurations[0].properties.privateIPAddress' --output tsv)
 
 # create a record set for the storage account
-# az network private-dns record-set a add-record \
-# --record-set-name $STORAGE_ACCOUNT_NAME \
-# --resource-group $RESOURCE_GROUP \
-# --zone-name $BLOB_PRIVATE_DNS_ZONE \
-# --ipv4-address $STORAGE_ACCOUNT_PRIVATE_IP
+az network private-dns record-set a add-record \
+--record-set-name $STORAGE_ACCOUNT_NAME \
+--resource-group $RESOURCE_GROUP \
+--zone-name $BLOB_PRIVATE_DNS_ZONE \
+--ipv4-address $STORAGE_ACCOUNT_PRIVATE_IP
 
 # Get my public IP
 HOME_IP=$(curl -s ipinfo.io/ip)
