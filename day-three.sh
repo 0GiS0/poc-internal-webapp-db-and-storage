@@ -3,6 +3,22 @@ RESOURCE_GROUP="internal-web"
 LOCATION="francecentral"
 VNET_NAME="vnet"
 
+########################################################
+############# Storage account without restrictions #####
+########################################################
+
+STORAGE_ACCOUNT_NAME="publicstorage"
+
+# Create the storage account
+az storage account create \
+--name $STORAGE_ACCOUNT_NAME \
+--resource-group $RESOURCE_GROUP \
+--location $LOCATION \
+--sku Standard_LRS 
+
+# Use Az Copy to move files to the storage account
+
+
 #################################################
 ##### Storage Account with private endpoint #####
 #################################################
